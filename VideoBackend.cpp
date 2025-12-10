@@ -1,11 +1,15 @@
 #include "VideoBackend.h"
 #include <QVideoFrame>
-#include <gst/video/video.h>
+#include <QDir>
+#include <QUrl>
+#include <QDateTime>
+// 引入 Ghost Pad 头文件
+#include <gst/gstghostpad.h>
 
 VideoBackend::VideoBackend(QObject *parent) : QObject(parent)
 {
-    // 初始化 GStreamer
     gst_init(nullptr, nullptr);
+    m_recordPath = QDir::currentPath();
 }
 
 VideoBackend::~VideoBackend()
@@ -15,46 +19,44 @@ VideoBackend::~VideoBackend()
 
 void VideoBackend::setVideoSink(QObject *sink)
 {
-    // 将 QML 传来的对象转换为 QVideoSink
     m_videoSink = qobject_cast<QVideoSink*>(sink);
-    if (m_videoSink) {
-        qDebug() << "VideoSink set successfully!";
-    } else {
+    if (!m_videoSink) {
         qDebug() << "Error: Failed to cast object to QVideoSink";
     }
 }
 
-void VideoBackend::cleanup()
-{
-    if (m_pipeline) {
-        gst_element_set_state(m_pipeline, GST_STATE_NULL);
-        gst_object_unref(m_pipeline);
-        m_pipeline = nullptr;
-    }
-    m_appsink = nullptr;
-    m_isPlaying = false;
-    emit isPlayingChanged();
-}
-
-void VideoBackend::startVideo(const QString &url, const QString &decoderName)
+void VideoBackend::startVideo(const QString &source, const QString &decoderName, bool isCamera)
 {
     if (!m_videoSink) {
         emit errorMessage("VideoSink not initialized. Component not ready?");
         return;
     }
 
-    cleanup(); // 先停止之前的
+    cleanup();
+    m_isCamera = isCamera; // 记住当前模式
 
-    // 构建管道
-    // 关键点：
-    // 1. videoconvert ! video/x-raw,format=RGBA: 强制转为 RGBA，这是 QImage 最喜欢的格式
-    // 2. appsink: 用于回调获取数据
-    QString pipeStr = QString(
-                          "rtspsrc location=%1 latency=200 ! "
-                          "rtph265depay ! h265parse ! %2 ! "
-                          "videoconvert ! video/x-raw,format=RGBA ! "
-                          "appsink name=mysink emit-signals=true sync=false drop=true"
-                          ).arg(url, decoderName);
+    QString pipeStr;
+    if (isCamera) {
+        // 摄像头模式
+        // ksvideosrc -> decodebin -> videoconvert -> tee -> ...
+        pipeStr = QString(
+                      "mfvideosrc device-index=%1 ! decodebin ! videoconvert ! "
+                      "tee name=t ! queue ! "
+                      "video/x-raw,format=RGBA ! "
+                      "appsink name=mysink emit-signals=true sync=false drop=true"
+                      ).arg(source);
+    } else {
+        // RTSP 模式
+        // rtspsrc -> depay -> parse -> tee -> ...
+        pipeStr = QString(
+                      "rtspsrc location=%1 latency=200 protocols=tcp ! "
+                      "rtph265depay ! h265parse ! " // 如果是H264流，请自行改为 h264parse
+                      "tee name=t ! queue ! "
+                      "%2 ! " // 解码器
+                      "videoconvert ! video/x-raw,format=RGBA ! "
+                      "appsink name=mysink emit-signals=true sync=false drop=true"
+                      ).arg(source, decoderName);
+    }
 
     qDebug() << "Pipeline:" << pipeStr;
 
@@ -67,18 +69,18 @@ void VideoBackend::startVideo(const QString &url, const QString &decoderName)
         return;
     }
 
-    // 获取 appsink 元素并连接信号
+    m_tee = gst_bin_get_by_name(GST_BIN(m_pipeline), "t");
     m_appsink = gst_bin_get_by_name(GST_BIN(m_pipeline), "mysink");
+
     if (m_appsink) {
         g_signal_connect(m_appsink, "new-sample", G_CALLBACK(on_new_sample), this);
-        gst_object_unref(m_appsink); // get_by_name 会增加引用计数，这里释放一下
+        gst_object_unref(m_appsink);
     } else {
-        emit errorMessage("AppSink not found in pipeline");
+        emit errorMessage("AppSink not found");
         return;
     }
 
-    GstStateChangeReturn ret = gst_element_set_state(m_pipeline, GST_STATE_PLAYING);
-    if (ret == GST_STATE_CHANGE_FAILURE) {
+    if (gst_element_set_state(m_pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         emit errorMessage("Failed to start playback");
         cleanup();
         return;
@@ -91,6 +93,152 @@ void VideoBackend::startVideo(const QString &url, const QString &decoderName)
 void VideoBackend::stopVideo()
 {
     cleanup();
+}
+
+void VideoBackend::toggleRecording()
+{
+    if (!m_isPlaying || !m_pipeline || !m_tee) {
+        emit errorMessage("Cannot record: Video not playing");
+        return;
+    }
+
+    if (m_isRecording) {
+        stopRecordingInternal();
+    } else {
+        // --- 开始录制 ---
+        QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+
+        // 路径清理
+        QString cleanPath = m_recordPath;
+        if (cleanPath.startsWith("file:///")) cleanPath = cleanPath.mid(8);
+        else if (cleanPath.startsWith("file://")) cleanPath = cleanPath.mid(7);
+        if (cleanPath.startsWith("/") && cleanPath.contains(":")) cleanPath = cleanPath.mid(1);
+
+        // 使用 .mkv (容错率高)
+        QString filename = QString("%1/video_%2.mkv").arg(cleanPath, timestamp);
+        qDebug() << "Recording to:" << filename;
+
+        // 1. 创建通用元件
+        GstElement *queue = gst_element_factory_make("queue", "rec_queue");
+        GstElement *mux = gst_element_factory_make("matroskamux", "rec_mux");
+        GstElement *sink = gst_element_factory_make("filesink", "rec_sink");
+
+        // 【关键修复 2】：设置 filesink async=false，防止阻塞主管道
+        if (sink) g_object_set(sink, "async", FALSE, NULL);
+
+        // 2. 适配层：解决格式冲突
+        GstElement *adapter = nullptr; // 编码或解析
+        GstElement *converter = nullptr; // 【关键修复 1】：颜色转换
+
+        if (m_isCamera) {
+            // 摄像头模式 (数据源是 RGBA)
+            // 必须：RGBA -> videoconvert -> YUV -> x264enc -> mux
+            converter = gst_element_factory_make("videoconvert", "rec_convert");
+            adapter = gst_element_factory_make("x264enc", "rec_enc");
+            if(adapter) {
+                // 实时录制优化参数
+                g_object_set(adapter, "tune", 0x00000004, "speed-preset", 1, "bitrate", 2000, NULL);
+            }
+        } else {
+            // RTSP 模式 (数据源是 H265/H264)
+            // 不需要 videoconvert，只需要 parser
+            // 假设是 H265。如果是 H264 (BigBuckBunny)，这里一定要改 h264parse！
+            adapter = gst_element_factory_make("h265parse", "rec_parse");
+            if(adapter) g_object_set(adapter, "config-interval", -1, NULL);
+        }
+
+        if (!queue || !mux || !sink || !adapter || (m_isCamera && !converter)) {
+            emit errorMessage("Failed to create recording elements");
+            return;
+        }
+
+        g_object_set(sink, "location", filename.toUtf8().constData(), NULL);
+
+        // 3. 创建 Bin
+        m_recBin = gst_bin_new("rec_bin");
+
+        if (m_isCamera) {
+            // 摄像头：加入 converter
+            gst_bin_add_many(GST_BIN(m_recBin), queue, converter, adapter, mux, sink, NULL);
+            // queue -> converter -> encoder -> mux -> sink
+            if (!gst_element_link_many(queue, converter, adapter, mux, sink, NULL)) {
+                emit errorMessage("Failed to link camera recording elements"); return;
+            }
+        } else {
+            // RTSP：直接连接
+            gst_bin_add_many(GST_BIN(m_recBin), queue, adapter, mux, sink, NULL);
+            // queue -> parser -> mux -> sink
+            if (!gst_element_link_many(queue, adapter, mux, sink, NULL)) {
+                emit errorMessage("Failed to link RTSP recording elements"); return;
+            }
+        }
+
+        // 4. Ghost Pad (层级修复)
+        GstPad *queueSinkPad = gst_element_get_static_pad(queue, "sink");
+        GstPad *ghostPad = gst_ghost_pad_new("sink", queueSinkPad);
+        gst_element_add_pad(m_recBin, ghostPad);
+        gst_object_unref(queueSinkPad);
+
+        // 5. 启动并连接
+        gst_bin_add(GST_BIN(m_pipeline), m_recBin);
+        gst_element_sync_state_with_parent(m_recBin);
+
+        m_teeSrcPad = gst_element_request_pad_simple(m_tee, "src_%u");
+        GstPad *binSinkPad = gst_element_get_static_pad(m_recBin, "sink");
+
+        if (gst_pad_link(m_teeSrcPad, binSinkPad) != GST_PAD_LINK_OK) {
+            emit errorMessage("Failed to link recording branch");
+            stopRecordingInternal();
+        } else {
+            m_isRecording = true;
+            emit isRecordingChanged();
+        }
+
+        if (binSinkPad) gst_object_unref(binSinkPad);
+    }
+}
+
+void VideoBackend::stopRecordingInternal()
+{
+    if (!m_isRecording || !m_recBin) return;
+
+    qDebug() << "Stopping recording...";
+
+    // 1. 发送 EOS 保证文件完整写入
+    GstPad *sinkPad = gst_element_get_static_pad(m_recBin, "sink");
+    if (sinkPad) {
+        gst_pad_send_event(sinkPad, gst_event_new_eos());
+        gst_object_unref(sinkPad);
+    }
+
+    // 2. 断开并移除
+    if (m_teeSrcPad) {
+        gst_pad_unlink(m_teeSrcPad, sinkPad); // 这里的 sinkPad 实际上是 NULL 也可以，只要 src 没问题
+        gst_element_release_request_pad(m_tee, m_teeSrcPad);
+        gst_object_unref(m_teeSrcPad);
+        m_teeSrcPad = nullptr;
+    }
+
+    gst_element_set_state(m_recBin, GST_STATE_NULL);
+    gst_bin_remove(GST_BIN(m_pipeline), m_recBin);
+    m_recBin = nullptr;
+
+    m_isRecording = false;
+    emit isRecordingChanged();
+}
+
+void VideoBackend::cleanup()
+{
+    if (m_isRecording) stopRecordingInternal();
+    if (m_tee) { gst_object_unref(m_tee); m_tee = nullptr; }
+    if (m_pipeline) {
+        gst_element_set_state(m_pipeline, GST_STATE_NULL);
+        gst_object_unref(m_pipeline);
+        m_pipeline = nullptr;
+    }
+    m_appsink = nullptr;
+    m_isPlaying = false;
+    emit isPlayingChanged();
 }
 
 void VideoBackend::togglePlayPause()
@@ -106,7 +254,6 @@ void VideoBackend::togglePlayPause()
     emit isPlayingChanged();
 }
 
-// 静态回调：从 GStreamer 线程跳回 C++ 类
 GstFlowReturn VideoBackend::on_new_sample(GstElement *sink, VideoBackend *self)
 {
     GstSample *sample;
@@ -119,7 +266,6 @@ GstFlowReturn VideoBackend::on_new_sample(GstElement *sink, VideoBackend *self)
     return GST_FLOW_ERROR;
 }
 
-// 处理每一帧数据
 void VideoBackend::handleFrame(GstSample *sample)
 {
     if (!m_videoSink) return;
@@ -134,20 +280,13 @@ void VideoBackend::handleFrame(GstSample *sample)
 
     GstMapInfo map;
     if (gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-        // 创建 QVideoFrame
-        // 注意：这里必须使用 QVideoFrameFormat (Qt6)
         QVideoFrameFormat format(QSize(width, height), QVideoFrameFormat::Format_RGBA8888);
         QVideoFrame frame(format);
 
-        // 必须 map 为 WriteOnly 才能把数据拷进去
         if (frame.map(QVideoFrame::WriteOnly)) {
             memcpy(frame.bits(0), map.data, map.size);
             frame.unmap();
-
-            // 重要：设置开始时间，否则可能无法渲染
             frame.setStartTime(0);
-
-            // 推送给 VideoOutput
             m_videoSink->setVideoFrame(frame);
         }
         gst_buffer_unmap(buffer, &map);
