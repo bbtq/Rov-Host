@@ -1,0 +1,7 @@
+.qtcreator/*
+.vs/*
+build/
+Generated/
+out/
+/CMakePresets.json
+/CMakeUserPresets.json
