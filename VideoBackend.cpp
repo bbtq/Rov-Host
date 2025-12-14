@@ -49,7 +49,7 @@ void VideoBackend::startVideo(const QString &source, const QString &decoderName,
         // RTSP 模式
         // rtspsrc -> depay -> parse -> tee -> ...
         pipeStr = QString(
-                      "rtspsrc location=%1 latency=200 protocols=tcp ! "
+                      "rtspsrc location=%1 latency=200 ! "
                       "rtph265depay ! h265parse ! " // 如果是H264流，请自行改为 h264parse
                       "tee name=t ! queue ! "
                       "%2 ! " // 解码器

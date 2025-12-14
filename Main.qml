@@ -147,7 +147,7 @@ ApplicationWindow {
                     id: urlField
                     visible: rbRtsp.checked
                     Layout.fillWidth: true
-                    text: "rtsp://127.0.0.1:8554"
+                    text: "rtsp://127.0.0.1:8554/"
                     selectByMouse: true
                     color: "white"
                     background: Rectangle { color: "#22ffffff"; radius: 8 }
