@@ -1,0 +1,8 @@
+.qtcreator/*
+.vs/*
+build/
+Generated/
+out/
+/CMakePresets.json
+/CMakeUserPresets.json
+/Main.qml.autosave
