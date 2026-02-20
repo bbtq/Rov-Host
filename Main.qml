@@ -13,6 +13,25 @@ ApplicationWindow {
     RobotClient {
         id: client
         onLogMessage: (msg) => logArea.append(msg)
+        Component.onCompleted: {
+                    // 1. 配置映射关系：手柄 Key -> RPC方法 -> 参数名 -> 缩放比例
+                    // 注意：手柄的 Y 轴在 SDL 中通常向上为负，所以这里 scale 设为 -1.0 来翻转
+                    client.addMapping("joy_lx", "move", "x", 1.0)
+                    client.addMapping("joy_ly", "move", "y", -1.0)   // 对应 ly -> y
+                    client.addMapping("joy_rx", "move", "rot", 1.0) // 对应 rx -> rot
+                    client.addMapping("joy_ry", "move", "z", -1.0)   // 对应 ry -> z
+        }
+    }
+
+    // 2. 监听手柄数据变化并同步给客户端
+    Connections {
+        target: Backend
+        function onAxisChanged() {
+            client.updateInputState("gamepad", "joy_lx", Backend.leftStickX)
+            client.updateInputState("gamepad", "joy_ly", Backend.leftStickY)
+            client.updateInputState("gamepad", "joy_rx", Backend.rightStickX)
+            client.updateInputState("gamepad", "joy_ry", Backend.rightStickY)
+        }
     }
 
     // // 捕获键盘输入 (作为全局输入源之一)
@@ -232,36 +251,35 @@ ApplicationWindow {
         }
 
         // --- 4. 映射配置 (示例：W -> move.x) ---
-        GroupBox {
-            title: "输入映射 (Method & Params)"
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+        // GroupBox {
+        //     title: "输入映射 (Method & Params)"
+        //     Layout.fillWidth: true
+        //     Layout.fillHeight: true
 
-            ColumnLayout {
-                RowLayout {
-                    Button {
-                        text: "应用默认映射 (W/S/A/D)"
-                        onClicked: {
-                            client.clearMappings()
-                            // 这里的逻辑：W按键(1.0) -> x=1.0, S按键(1.0) -> x=-1.0
-                            // 实际需要更复杂的逻辑处理按键对轴的模拟，这里做简化演示
-                            client.addMapping("W", "move", "x", 0.5)
-                            client.addMapping("S", "move", "x", -0.5) // 注意：简单覆盖可能有问题，实际应在C++处理轴合成
-                            client.addMapping("A", "move", "y", 0.5)
-                            client.addMapping("D", "move", "y", -0.5)
-                            client.addMapping("Space", "set_depth_locked", "", 1.0)
-                            logArea.append("默认映射已应用")
-                        }
-                    }
-                }
+        //     ColumnLayout {
+        //         RowLayout {
+        //             Button {
+        //                 text: "应用默认映射 (W/S/A/D)"
+        //                 onClicked: {
+        //                     client.clearMappings()
+        //                     // 实际需要更复杂的逻辑处理按键对轴的模拟，这里做简化演示
+        //                     client.addMapping("lx", "move", "x", 1.0)
+        //                     client.addMapping("ly", "move", "y", 1.0)
+        //                     client.addMapping("rx", "move", "rot", 1.0)
+        //                     client.addMapping("ry", "move", "z", 1.0)
+        //                     // client.addMapping("Space", "set_depth_locked", "", 1.0)
+        //                     logArea.append("默认映射已应用")
+        //                 }
+        //             }
+        //         }
 
-                TextArea {
-                    text: "Mapping logic is handled in C++. \nW/S -> move.x\nA/D -> move.y\nSpace -> depth_lock"
-                    readOnly: true
-                    background: Rectangle { color: "#eee" }
-                }
-            }
-        }
+        //         TextArea {
+        //             text: "Mapping logic is handled in C++. \nW/S -> move.x\nA/D -> move.y\nSpace -> depth_lock"
+        //             readOnly: true
+        //             background: Rectangle { color: "#eee" }
+        //         }
+        //     }
+        // }
 
         // --- 日志区域 ---
         ScrollView {

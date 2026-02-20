@@ -113,34 +113,84 @@ void RobotClient::onSocketError(QAbstractSocket::SocketError socketError)
 }
 
 // 组装JSON-RPC并加上HTTP头
+// void RobotClient::onTimerTick()
+// {
+//     if (m_socket->state() != QAbstractSocket::ConnectedState) return;
+
+//     // 1. 根据映射和当前输入状态构建 params
+//     QMap<QString, QJsonObject> methodsMap;
+
+//     for (const auto &map : m_mappings) {
+//         float val = 0.0f;
+//         if (m_currentInputValues.contains(map.inputKey)) {
+//             val = m_currentInputValues[map.inputKey] * map.scale;
+//         }
+
+//         // 获取或创建 method 对应的 params 对象
+//         QJsonObject params = methodsMap.value(map.method);
+        
+//         // 处理特殊逻辑：比如 set_depth_locked 需要布尔值
+//         if (map.method == "set_depth_locked") {
+//              // 示例中的特殊处理：如果是一维数组形式 [false]
+//              // 这里为了通用性，我们暂且按 Key-Value 存，最后特殊处理
+//              // 或者根据 paramKey 是否为空来判断
+//         }
+        
+//         // 写入值
+//         // 注意：示例中 set_depth_locked 是数组，move 是对象。
+//         // 为了简化，这里演示 "move" 类型的对象参数构建
+//         params.insert(map.paramKey, val);
+        
+//         methodsMap.insert(map.method, params);
+//     }
+
+//     // 2. 构建 JSON-RPC Batch 数组
+//     QJsonArray batchArray;
+//     int idCounter = 1;
+
+//     // 按照示例硬编码构建结构，或者遍历 methodsMap 动态构建
+//     // 这里为了匹配你的示例报文结构，我们做混合处理
+    
+//     // Method: move
+//     if (methodsMap.contains("move")) {
+//         QJsonObject req;
+//         req["jsonrpc"] = "2.0";
+//         req["id"] = idCounter++;
+//         req["method"] = "move";
+//         req["params"] = methodsMap["move"];
+//         batchArray.append(req);
+//     }
+
+//     // Method: set_depth_locked (示例中是数组参数，特殊处理演示)
+//     // 假设我们有一个映射是 "Btn_X" -> "set_depth_locked"
+//     float depthVal = m_currentInputValues.value("Btn_X", 0.0);
+//     QJsonObject reqLock;
+//     reqLock["jsonrpc"] = "2.0";
+//     reqLock["id"] = idCounter++;
+//     reqLock["method"] = "set_depth_locked";
+//     QJsonArray paramsArr;
+//     paramsArr.append(depthVal > 0.5); // 大于0.5视为true
+//     reqLock["params"] = paramsArr;
+//     batchArray.append(reqLock);
+
+//     QJsonDocument doc(batchArray);
+//     QByteArray jsonBody = doc.toJson(QJsonDocument::Compact);
+
 void RobotClient::onTimerTick()
 {
     if (m_socket->state() != QAbstractSocket::ConnectedState) return;
 
-    // 1. 根据映射和当前输入状态构建 params
+    // 1. 遍历映射表，根据最新的输入值构建各方法的参数对象
     QMap<QString, QJsonObject> methodsMap;
-
     for (const auto &map : m_mappings) {
         float val = 0.0f;
         if (m_currentInputValues.contains(map.inputKey)) {
             val = m_currentInputValues[map.inputKey] * map.scale;
         }
 
-        // 获取或创建 method 对应的 params 对象
+        // 获取该方法对应的 Json 对象（如果不存在则新建）
         QJsonObject params = methodsMap.value(map.method);
-        
-        // 处理特殊逻辑：比如 set_depth_locked 需要布尔值
-        if (map.method == "set_depth_locked") {
-             // 示例中的特殊处理：如果是一维数组形式 [false]
-             // 这里为了通用性，我们暂且按 Key-Value 存，最后特殊处理
-             // 或者根据 paramKey 是否为空来判断
-        }
-        
-        // 写入值
-        // 注意：示例中 set_depth_locked 是数组，move 是对象。
-        // 为了简化，这里演示 "move" 类型的对象参数构建
-        params.insert(map.paramKey, val);
-        
+        params.insert(map.paramKey, val); // 插入参数，如 "x": 0.5
         methodsMap.insert(map.method, params);
     }
 
@@ -148,31 +198,19 @@ void RobotClient::onTimerTick()
     QJsonArray batchArray;
     int idCounter = 1;
 
-    // 按照示例硬编码构建结构，或者遍历 methodsMap 动态构建
-    // 这里为了匹配你的示例报文结构，我们做混合处理
-    
-    // Method: move
-    if (methodsMap.contains("move")) {
+    // 遍历所有待发送的方法（包含 move, set_depth_locked 等）
+    auto it = methodsMap.constBegin();
+    while (it != methodsMap.constEnd()) {
         QJsonObject req;
         req["jsonrpc"] = "2.0";
         req["id"] = idCounter++;
-        req["method"] = "move";
-        req["params"] = methodsMap["move"];
+        req["method"] = it.key();   // 这里的 key 就是 "move"
+        req["params"] = it.value(); // 这里的 value 就是包含 x,y,rot,z 的对象
         batchArray.append(req);
+        ++it;
     }
 
-    // Method: set_depth_locked (示例中是数组参数，特殊处理演示)
-    // 假设我们有一个映射是 "Btn_X" -> "set_depth_locked"
-    float depthVal = m_currentInputValues.value("Btn_X", 0.0);
-    QJsonObject reqLock;
-    reqLock["jsonrpc"] = "2.0";
-    reqLock["id"] = idCounter++;
-    reqLock["method"] = "set_depth_locked";
-    QJsonArray paramsArr; 
-    paramsArr.append(depthVal > 0.5); // 大于0.5视为true
-    reqLock["params"] = paramsArr;
-    batchArray.append(reqLock);
-
+    // 3. 序列化并发送报文 (保持原有 HTTP 封装逻辑不变)
     QJsonDocument doc(batchArray);
     QByteArray jsonBody = doc.toJson(QJsonDocument::Compact);
 
