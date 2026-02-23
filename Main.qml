@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs // 新增：用于文件选择
 // 引入我们的C++类（需要在main.cpp中注册）
 import MyRobot 1.0
 
@@ -14,14 +15,41 @@ ApplicationWindow {
         id: client
         onLogMessage: (msg) => logArea.append(msg)
         Component.onCompleted: {
-                    // 1. 配置映射关系：手柄 Key -> RPC方法 -> 参数名 -> 缩放比例
-                    // 注意：手柄的 Y 轴在 SDL 中通常向上为负，所以这里 scale 设为 -1.0 来翻转
-                    client.addMapping("joy_lx", "move", "x", 1.0)
-                    client.addMapping("joy_ly", "move", "y", -1.0)   // 对应 ly -> y
-                    client.addMapping("joy_rx", "move", "rot", 1.0) // 对应 rx -> rot
-                    client.addMapping("joy_ry", "move", "z", -1.0)   // 对应 ry -> z
-                    client.addMapping("Btn_A", "set_depth_locked", "btn_status", 1.0)
+            // 策略：优先尝试从默认路径加载
+            let defaultPath = client.getDefaultConfigPath()
+            if (!client.importConfig(defaultPath)) {
+                logArea.append("未找到配置文件，应用出厂默认映射...")
+                applyHardcodedDefaults()
+            }
         }
+
+        // 封装硬编码的默认映射
+        function applyHardcodedDefaults() {
+            client.clearMappings()
+            client.addMapping("joy_lx", "move", "x", 1.0)
+            client.addMapping("joy_ly", "move", "y", -1.0)
+            client.addMapping("joy_rx", "move", "rot", 1.0)
+            client.addMapping("joy_ry", "move", "z", -1.0)
+            client.addMapping("Btn_A", "set_depth_locked", "btn_status", 1.0)
+            logArea.append("默认映射已加载")
+        }
+    }
+
+    // --- 文件对话框 ---
+    FileDialog {
+        id: importDialog
+        title: "选择映射配置文件"
+        nameFilters: ["JSON files (*.json)"]
+        onAccepted: client.importConfig(selectedFile)
+    }
+
+    FileDialog {
+        id: exportDialog
+        title: "导出配置文件"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["JSON files (*.json)"]
+        currentFile: "file:///" + client.getDefaultConfigPath() // 默认文件名
+        onAccepted: client.exportConfig(selectedFile)
     }
 
     // 2. 监听手柄数据变化并同步给客户端
@@ -289,6 +317,27 @@ ApplicationWindow {
         //         }
         //     }
         // }
+
+        // 在顶部工具栏或连接配置区域添加 导入/导出 按钮
+        GroupBox {
+            title: "配置管理"
+            Layout.fillWidth: true
+            RowLayout {
+                spacing: 10
+                Button {
+                    text: "📥 导入配置"
+                    onClicked: importDialog.open()
+                }
+                Button {
+                    text: "📤 导出当前配置"
+                    onClicked: exportDialog.open()
+                }
+                Button {
+                    text: "♻️ 恢复出厂映射"
+                    onClicked: client.applyHardcodedDefaults()
+                }
+            }
+        }
 
         // --- 日志区域 ---
         ScrollView {

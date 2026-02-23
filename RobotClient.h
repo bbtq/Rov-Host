@@ -8,6 +8,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QInputDevice> // Qt6 输入设备管理
+#include <QFile>
+#include <QStandardPaths>
 
 // 定义映射规则结构体
 struct InputMapping {
@@ -38,6 +40,13 @@ public:
     // 添加映射规则 (供QML配置使用)
     Q_INVOKABLE void addMapping(const QString &inputKey, const QString &method, const QString &paramKey, float scale);
     Q_INVOKABLE void clearMappings();
+
+    // 新增：导出当前映射到 JSON 文件
+    Q_INVOKABLE void exportConfig(const QString &filePath);
+    // 新增：从 JSON 文件导入映射（返回是否成功）
+    Q_INVOKABLE bool importConfig(const QString &filePath);
+    // 新增：获取默认配置文件路径（如程序目录下 config.json）
+    Q_INVOKABLE QString getDefaultConfigPath();
 
     bool isConnected() const;
     int frequency() const;

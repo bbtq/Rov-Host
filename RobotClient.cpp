@@ -88,6 +88,60 @@ void RobotClient::clearMappings()
     m_mappings.clear();
 }
 
+// 获取默认路径：建议放在可执行文件同级目录
+QString RobotClient::getDefaultConfigPath() {
+    return QCoreApplication::applicationDirPath() + "/robot_config.json";
+}
+
+void RobotClient::exportConfig(const QString &filePath) {
+    QString path = filePath;
+    if (path.startsWith("file:///")) path = QUrl(filePath).toLocalFile(); // 处理QML传来的URL
+
+    QJsonArray rootArray;
+    for (const auto &map : m_mappings) {
+        QJsonObject obj;
+        obj["inputKey"] = map.inputKey;
+        obj["method"] = map.method;
+        obj["paramKey"] = map.paramKey;
+        obj["scale"] = map.scale;
+        rootArray.append(obj);
+    }
+
+    QJsonDocument doc(rootArray);
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(doc.toJson());
+        file.close();
+        emit logMessage("配置已导出至: " + path);
+    }
+}
+
+bool RobotClient::importConfig(const QString &filePath) {
+    QString path = filePath;
+    if (path.startsWith("file:///")) path = QUrl(filePath).toLocalFile();
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+
+    QByteArray data = file.readAll();
+    QJsonDocument doc = QJsonDocument::fromJson(data);
+    if (!doc.isArray()) return false;
+
+    clearMappings(); // 导入前清空旧映射
+    QJsonArray array = doc.array();
+    for (int i = 0; i < array.size(); ++i) {
+        QJsonObject obj = array[i].toObject();
+        addMapping(
+            obj["inputKey"].toString(),
+            obj["method"].toString(),
+            obj["paramKey"].toString(),
+            obj["scale"].toDouble()
+            );
+    }
+    emit logMessage("成功导入配置: " + path);
+    return true;
+}
+
 bool RobotClient::isConnected() const { return m_socket->state() == QAbstractSocket::ConnectedState; }
 
 int RobotClient::frequency() const { return m_frequency; }
