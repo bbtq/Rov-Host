@@ -77,6 +77,7 @@ private:
     QMap<QString, bool> m_toggleStates;     // 新增：用于存储 btn_status 的开关状态
     // 新增：记录上一次发送给服务器的各个方法的参数快照
     QMap<QString, QJsonValue> m_lastMethodsMap;
+    QMap<QString, bool> m_functionStates;
     
     // 存储映射规则
     QList<InputMapping> m_mappings;

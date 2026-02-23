@@ -254,76 +254,84 @@ void RobotClient::onTimerTick()
 {
     if (m_socket->state() != QAbstractSocket::ConnectedState) return;
 
-    // --- 第一步：聚合所有映射的数值 ---
-    // 使用嵌套 Map 存储聚合结果：Method -> (ParamKey -> 累加后的数值)
+    // 1. 聚合数值和处理状态翻转
     QMap<QString, QMap<QString, double>> aggregatedParams;
-    // 记录哪些方法属于“直接数据”模式 (btn_status / btn_value)
-    QSet<QString> directMethods;
+    QSet<QString> statusMethodParams; // 记录哪些是状态类型，用于后续生成 bool
 
     for (const auto &map : m_mappings) {
         float currentVal = m_currentInputValues.value(map.inputKey, 0.0f);
         float lastVal = m_lastInputValues.value(map.inputKey, 0.0f);
+        bool isRisingEdge = (currentVal > 0.5f && lastVal <= 0.5f);
 
         if (map.paramKey == "btn_status") {
-            // 处理切换逻辑：检测上升沿（刚刚按下）
-            if (currentVal > 0.5f && lastVal <= 0.5f) {
-                m_toggleStates[map.inputKey] = !m_toggleStates.value(map.inputKey, false);
+            QString funcKey = map.method + ":" + map.paramKey;
+
+            // 如果这个物理按键刚刚被按下，翻转该功能的逻辑状态
+            if (isRisingEdge) {
+                m_functionStates[funcKey] = !m_functionStates.value(funcKey, false);
             }
-            // 状态同步：只要该 inputKey 的切换状态为真，就记录为 1.0
-            aggregatedParams[map.method][map.paramKey] = m_toggleStates.value(map.inputKey, false) ? 1.0 : 0.0;
-            directMethods.insert(map.method);
+
+            // 写入聚合表（注意这里不直接写 0/1，而是标记这个功能的状态）
+            aggregatedParams[map.method][map.paramKey] = m_functionStates.value(funcKey, false) ? 1.0 : 0.0;
+            statusMethodParams.insert(funcKey);
         } else {
-            // 标准数值或 btn_value：执行累加
-            // 例如：W 贡献 +1.0，S 贡献 -1.0，两者都按结果为 0
+            // 轴控制或实时数值：直接累加
             aggregatedParams[map.method][map.paramKey] += (currentVal * map.scale);
-            if (map.paramKey == "btn_value") directMethods.insert(map.method);
         }
     }
 
-    // 更新“上一时刻”值，供下次 Tick 检测上升沿
+    // 更新“上一时刻”值，用于下次边沿检测
     m_lastInputValues = m_currentInputValues;
 
-    // --- 第二步：将聚合后的数据转换为 JSON 结构 ---
+    // 2. 转换成 JSON-RPC 格式
     QMap<QString, QJsonValue> methodsMap;
-    for (auto methodIt = aggregatedParams.begin(); methodIt != aggregatedParams.end(); ++methodIt) {
-        QString methodName = methodIt.key();
-        const auto &paramsGroup = methodIt.value();
+    for (auto it = aggregatedParams.begin(); it != aggregatedParams.end(); ++it) {
+        QString method = it.key();
+        const auto &paramsGroup = it.value();
 
-        if (directMethods.contains(methodName)) {
-            // 直接数据模式：取第一个分量的值生成数组
+        // 如果该方法只有一个参数且是状态/数值类型，按“直接数据”模式处理（params 可能是数组或单值）
+        // 这里根据你之前的需求，如果 paramKey 为 btn_status/btn_value，不带 key 直接传
+        if (paramsGroup.contains("btn_status") || paramsGroup.contains("btn_value")) {
             QJsonArray arr;
-            double finalVal = paramsGroup.begin().value();
-            if (paramsGroup.begin().key() == "btn_status") arr.append(finalVal > 0.5);
-            else arr.append(finalVal);
-            methodsMap[methodName] = arr;
+            if (paramsGroup.contains("btn_status")) {
+                arr.append(paramsGroup.value("btn_status") > 0.5); // 转为 true/false
+            } else {
+                arr.append(paramsGroup.value("btn_value"));
+            }
+            methodsMap[method] = arr;
         } else {
-            // 对象模式：构建包含 x, y, rot, z 等键值的对象
+            // 对象模式：{"x": 1.0, "y": 0.0 ...}
             QJsonObject obj;
             for (auto pIt = paramsGroup.begin(); pIt != paramsGroup.end(); ++pIt) {
                 obj.insert(pIt.key(), pIt.value());
             }
-            methodsMap[methodName] = obj;
+            methodsMap[method] = obj;
         }
     }
 
-    // --- 第三步：构建 Batch 数组并发送 ---
+    // 3. 构建 Batch 报文
     QJsonArray batchArray;
     int idCounter = 1;
 
-    // 1. 固定发送 get_info
-    QJsonObject getInfoReq;
-    getInfoReq["jsonrpc"] = "2.0";
-    getInfoReq["id"] = idCounter++;
-    getInfoReq["method"] = "get_info";
-    batchArray.append(getInfoReq);
+    // A. 强制发送心跳
+    QJsonObject getInfo;
+    getInfo["jsonrpc"] = "2.0";
+    getInfo["id"] = idCounter++;
+    getInfo["method"] = "get_info";
+    batchArray.append(getInfo);
 
-    // 2. 根据变化或活跃状态添加方法
+    // B. 发送变化或活跃的指令
     for (auto it = methodsMap.constBegin(); it != methodsMap.constEnd(); ++it) {
         QString method = it.key();
         QJsonValue currentParams = it.value();
 
         bool changed = (!m_lastMethodsMap.contains(method) || m_lastMethodsMap[method] != currentParams);
-        bool active = isParamsActive(currentParams);
+
+        // 优化：对于 move 这种轴控，非零即活跃；对于状态切换，变了才发
+        bool active = false;
+        if (currentParams.isObject()) {
+            active = isParamsActive(currentParams);
+        }
 
         if (changed || active) {
             QJsonObject req;
