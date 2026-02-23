@@ -86,6 +86,7 @@ void RobotClient::addMapping(const QString &inputKey, const QString &method, con
 void RobotClient::clearMappings()
 {
     m_mappings.clear();
+    m_lastMethodsMap.clear(); // 新增
 }
 
 // 获取默认路径：建议放在可执行文件同级目录
@@ -234,85 +235,87 @@ void RobotClient::onTimerTick()
 {
     if (m_socket->state() != QAbstractSocket::ConnectedState) return;
 
-    // 1. 临时存储各方法的参数（因为 params 可能是 Object 也可能是 Value/Array）
-    // 我们用 QJsonValue 来兼容两种情况
+    // --- 第一步：计算当前所有映射方法对应的目标参数 (methodsMap) ---
     QMap<QString, QJsonValue> methodsMap;
-
-    // 记录哪些方法已经使用了“直接数据”模式，防止冲突
     QSet<QString> directModeMethods;
 
     for (const auto &map : m_mappings) {
         float currentVal = m_currentInputValues.value(map.inputKey, 0.0f);
         float lastVal = m_lastInputValues.value(map.inputKey, 0.0f);
-
-        // 判定：当前值 > 0.5 视为按下
         bool isPressed = (currentVal > 0.5f);
         bool wasPressed = (lastVal > 0.5f);
 
         if (map.paramKey == "btn_status") {
-            // --- 情况 A: btn_status (按下瞬间翻转) ---
-            if (isPressed && !wasPressed) { // 检测到上升沿（刚刚按下）
+            if (isPressed && !wasPressed) {
                 m_toggleStates[map.inputKey] = !m_toggleStates.value(map.inputKey, false);
             }
-            // 构造参数：直接传布尔值（封装进数组以符合一般 RPC 规范，或根据需求直接传值）
             QJsonArray arr;
             arr.append(m_toggleStates.value(map.inputKey, false));
             methodsMap[map.method] = arr;
             directModeMethods.insert(map.method);
-
         } else if (map.paramKey == "btn_value") {
-            // --- 情况 B: btn_value (实时数值) ---
             QJsonArray arr;
             arr.append(currentVal * map.scale);
             methodsMap[map.method] = arr;
             directModeMethods.insert(map.method);
-
         } else {
-            // --- 情况 C: 标准键值对 (如 x, y, rot) ---
-            // 如果该方法还没创建过，或者之前是直接数据模式，则初始化为 Object
             if (!methodsMap.contains(map.method) || directModeMethods.contains(map.method)) {
                 methodsMap[map.method] = QJsonObject();
-                directModeMethods.remove(map.method); // 切换回对象模式
+                directModeMethods.remove(map.method);
             }
-
             QJsonObject obj = methodsMap[map.method].toObject();
             obj.insert(map.paramKey, currentVal * map.scale);
             methodsMap[map.method] = obj;
         }
     }
 
-    // 更新“上一时刻”的值，供下次 Tick 使用
-    m_lastInputValues = m_currentInputValues;
-
-    // 2. 构建 JSON-RPC Batch 数组
+    // --- 第二步：构建 JSON-RPC Batch 数组 ---
     QJsonArray batchArray;
     int idCounter = 1;
 
-    for (auto it = methodsMap.constBegin(); it != methodsMap.constEnd(); ++it) {
-        QJsonObject req;
-        req["jsonrpc"] = "2.0";
-        req["id"] = idCounter++;
-        req["method"] = it.key();
-        req["params"] = it.value(); // 这里自动填入 QJsonObject 或 QJsonArray
-        batchArray.append(req);
+    // 1. 固定发送 get_info (无 params 字段)
+    QJsonObject getInfoReq;
+    getInfoReq["jsonrpc"] = "2.0";
+    getInfoReq["id"] = idCounter++;
+    getInfoReq["method"] = "get_info";
+    batchArray.append(getInfoReq);
+
+    // 2. 检查哪些手柄参数发生了变化
+    auto it = methodsMap.constBegin();
+    while (it != methodsMap.constEnd()) {
+        QString method = it.key();
+        QJsonValue currentParams = it.value();
+
+        // 逻辑判断：如果上一次没发送过该方法，或者当前参数与上一次不同
+        if (!m_lastMethodsMap.contains(method) || m_lastMethodsMap[method] != currentParams) {
+            QJsonObject req;
+            req["jsonrpc"] = "2.0";
+            req["id"] = idCounter++;
+            req["method"] = method;
+            req["params"] = currentParams;
+            batchArray.append(req);
+        }
+        ++it;
     }
 
-    // 3. 序列化并发送报文 (保持原有 HTTP 封装逻辑不变)
+    // --- 第三步：状态更新与发送 ---
+
+    // 更新缓存，用于下一次 Tick 时的对比
+    m_lastMethodsMap = methodsMap;
+    m_lastInputValues = m_currentInputValues;
+
     QJsonDocument doc(batchArray);
     QByteArray jsonBody = doc.toJson(QJsonDocument::Compact);
 
-    // 3. 构建 HTTP 报文
-    // 注意：Content-Length 必须精确
+    // 构建 HTTP 报文 (与你源代码一致)
     QByteArray httpPacket;
     httpPacket.append("POST / HTTP/1.1\r\n");
     httpPacket.append("Content-Type: application/json\r\n");
     httpPacket.append("Accept: application/json\r\n");
     httpPacket.append("Host: " + m_targetIp.toUtf8() + ":" + QByteArray::number(m_targetPort) + "\r\n");
     httpPacket.append("Content-Length: " + QByteArray::number(jsonBody.size()) + "\r\n");
-    httpPacket.append("\r\n"); // HTTP头结束
+    httpPacket.append("\r\n");
     httpPacket.append(jsonBody);
 
-    // 4. 发送
     m_socket->write(httpPacket);
-    // m_socket->flush(); // LowDelayOption 下通常不需要频繁flush，但在高频下可确保写入
 }
