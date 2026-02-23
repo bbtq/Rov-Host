@@ -138,30 +138,29 @@ QString GamepadBackend::pressedKeysString() const
     return names.join(" + ");
 }
 
-// --- 核心逻辑：拦截键盘事件 ---
-bool GamepadBackend::eventFilter(QObject *watched, QEvent *event)
-{
-    // 仅在键盘模式下处理
-    if (m_inputMode == 1) {
-        if (event->type() == QEvent::KeyPress) {
-            QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
-            if (!keyEvent->isAutoRepeat()) { // 忽略长按自动重复
-                m_activeKeys.insert(keyEvent->key());
-                emit pressedKeysChanged();
-            }
-            return true; // 标记事件已处理（不传给 QML 焦点项），根据需要可改为 false
-        }
-        else if (event->type() == QEvent::KeyRelease) {
+// 2. 在 eventFilter() 中处理键盘触发：
+bool GamepadBackend::eventFilter(QObject *watched, QEvent *event) {
+    if (m_inputMode == 1) { // 键盘模式
+        if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
             QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
             if (!keyEvent->isAutoRepeat()) {
-                m_activeKeys.remove(keyEvent->key());
-                emit pressedKeysChanged();
+                bool isPressed = (event->type() == QEvent::KeyPress);
+                QMetaEnum metaEnum = QMetaEnum::fromType<Qt::Key>();
+                const char* keyName = metaEnum.valueToKey(keyEvent->key());
+
+                if (keyName) {
+                    QString inputKey = "key_" + QString(keyName).replace("Key_", "");
+                    if (isPressed) m_activeKeys.insert(keyEvent->key());
+                    else m_activeKeys.remove(keyEvent->key());
+
+                    emit pressedKeysChanged();
+                    // 发送给 RobotClient
+                    emit inputTriggered("keyboard", inputKey, isPressed ? 1.0 : 0.0);
+                }
             }
             return true;
         }
     }
-
-    // 其他情况交给父类处理
     return QObject::eventFilter(watched, event);
 }
 
@@ -198,10 +197,14 @@ void GamepadBackend::poll()
     double lt = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0;
     double rt = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0;
 
-    if (lx != m_lx || ly != m_ly || rx != m_rx || ry != m_ry || lt != m_lt || rt != m_rt) {
-        m_lx = lx; m_ly = ly; m_rx = rx; m_ry = ry; m_lt = lt; m_rt = rt;
-        emit axisChanged();
-    }
+    if (lx != m_lx) { m_lx = lx; emit inputTriggered("gamepad", "joy_lx", lx); }
+    if (ly != m_ly) { m_ly = ly; emit inputTriggered("gamepad", "joy_ly", ly); }
+    if (rx != m_rx) { m_rx = rx; emit inputTriggered("gamepad", "joy_rx", rx); }
+    if (ry != m_ry) { m_ry = ry; emit inputTriggered("gamepad", "joy_ry", ry); }
+    if (lt != m_lt) { m_lt = lt; emit inputTriggered("gamepad", "joy_lt", lt); }
+    if (rt != m_rt) { m_rt = rt; emit inputTriggered("gamepad", "joy_rt", rt); }
+
+
 
     // 读取按键 (这里为了演示简单，合成一个 int，实际项目可以用 QMap 或多个 bool)
 //     int currentButtons = 0;
@@ -218,15 +221,15 @@ void GamepadBackend::poll()
     QVariantMap currentButtons;
     for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
         auto btn = static_cast<SDL_GameControllerButton>(i);
-
-        // 获取按键按下状态 (true/false)
         bool isPressed = SDL_GameControllerGetButton(m_controller, btn);
-
-        // 获取 SDL 标准按键名称 (例如 "a", "b", "x", "y", "back", "start", "dpaddown" 等)
-        const char* btnName = SDL_GameControllerGetStringForButton(btn);
-
-        if (btnName) {
-            currentButtons.insert(QString::fromUtf8(btnName), isPressed);
+        const char* name = SDL_GameControllerGetStringForButton(btn);
+        if (name) {
+            QString keyName = "btn_" + QString::fromUtf8(name);
+            currentButtons.insert(keyName, isPressed);
+            // 如果状态变了，触发信号
+            if (m_buttons.value(keyName).toBool() != isPressed) {
+                emit inputTriggered("gamepad", keyName, isPressed ? 1.0 : 0.0);
+            }
         }
     }
 

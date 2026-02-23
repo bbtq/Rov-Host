@@ -25,14 +25,23 @@ ApplicationWindow {
 
         // 封装硬编码的默认映射
         function applyHardcodedDefaults() {
-            client.clearMappings()
-            client.addMapping("joy_lx", "move", "x", 1.0)
-            client.addMapping("joy_ly", "move", "y", -1.0)
-            client.addMapping("joy_rx", "move", "rot", 1.0)
-            client.addMapping("joy_ry", "move", "z", -1.0)
-            client.addMapping("Btn_A", "set_depth_locked", "btn_status", 1.0)
-            logArea.append("默认映射已加载")
-        }
+                client.clearMappings()
+                // --- 手柄默认映射 ---
+                client.addMapping("joy_lx", "move", "x", 1.0)
+                client.addMapping("joy_ly", "move", "y", -1.0)
+                client.addMapping("joy_rx", "move", "rot", 1.0)
+                client.addMapping("joy_ry", "move", "z", -1.0)
+                client.addMapping("btn_a", "set_depth_locked", "btn_status", 1.0)
+
+                // --- 键盘默认映射 (新增) ---
+                client.addMapping("key_W", "move", "y", 1.0)
+                client.addMapping("key_S", "move", "y", -1.0)
+                client.addMapping("key_A", "move", "x", -1.0)
+                client.addMapping("key_D", "move", "x", 1.0)
+                client.addMapping("key_Space", "set_depth_locked", "btn_status", 1.0)
+
+                logArea.append("已加载手柄与键盘混合默认配置")
+            }
     }
 
     // --- 文件对话框 ---
@@ -52,22 +61,14 @@ ApplicationWindow {
         onAccepted: client.exportConfig(selectedFile)
     }
 
-    // 2. 监听手柄数据变化并同步给客户端
+    // 2. 核心：通过统一信号同步状态
     Connections {
         target: Backend
-        function onAxisChanged() {
-            client.updateInputState("gamepad", "joy_lx", Backend.leftStickX)
-            client.updateInputState("gamepad", "joy_ly", Backend.leftStickY)
-            client.updateInputState("gamepad", "joy_rx", Backend.rightStickX)
-            client.updateInputState("gamepad", "joy_ry", Backend.rightStickY)
-        }
-        function onButtonsChanged() {
-            // Backend.buttons 现在是一个对象，例如 { "a": true, "x": false ... }
-            // 我们可以直接通过键名访问
-            client.updateInputState("gamepad", "Btn_A", Backend.buttons["a"] ? 1.0 : 0.0)
-            client.updateInputState("gamepad", "Btn_B", Backend.buttons["b"] ? 1.0 : 0.0)
-            client.updateInputState("gamepad", "Btn_X", Backend.buttons["x"] ? 1.0 : 0.0)
-            client.updateInputState("gamepad", "Btn_Y", Backend.buttons["y"] ? 1.0 : 0.0)
+        // 这个函数会处理所有来自 gamepad 和 keyboard 的 inputTriggered 信号
+        function onInputTriggered(source, key, value) {
+            // source: "gamepad" 或 "keyboard"
+            // key: 如 "joy_lx", "btn_a", "key_W"
+            client.updateInputState(source, key, value)
         }
     }
 

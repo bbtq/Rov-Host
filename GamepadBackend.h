@@ -84,6 +84,7 @@ signals:
     // 新增 signals
     void inputModeChanged();
     void pressedKeysChanged();
+    void inputTriggered(QString source, QString key, double value);
 
 protected:
     // 核心：重写事件过滤器

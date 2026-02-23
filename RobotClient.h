@@ -69,6 +69,7 @@ private:
     int m_frequency = 50; // 默认50Hz
     QString m_targetIp;
     int m_targetPort;
+    bool isParamsActive(const QJsonValue &val);
 
     // 存储当前所有输入的最新的值 "Key_W" -> 1.0
     QMap<QString, float> m_currentInputValues;
