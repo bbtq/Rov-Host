@@ -63,6 +63,8 @@ private:
 
     // 存储当前所有输入的最新的值 "Key_W" -> 1.0
     QMap<QString, float> m_currentInputValues;
+    QMap<QString, float> m_lastInputValues; // 新增：用于检测边沿
+    QMap<QString, bool> m_toggleStates;     // 新增：用于存储 btn_status 的开关状态
     
     // 存储映射规则
     QList<InputMapping> m_mappings;

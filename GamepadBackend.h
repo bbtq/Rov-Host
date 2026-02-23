@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <vector>
 #include <QSet>
+#include <QVariantMap>
 
 // 引入 SDL
 #define SDL_MAIN_HANDLED
@@ -27,7 +28,8 @@ class GamepadBackend : public QObject
     Q_PROPERTY(double rightStickY READ rightStickY NOTIFY axisChanged)
     Q_PROPERTY(double leftTrigger READ leftTrigger NOTIFY axisChanged)
     Q_PROPERTY(double rightTrigger READ rightTrigger NOTIFY axisChanged)
-    Q_PROPERTY(int buttons READ buttons NOTIFY buttonsChanged) // 使用位掩码传输所有按键
+    // Q_PROPERTY(int buttons READ buttons NOTIFY buttonsChanged) // 使用位掩码传输所有按键
+    Q_PROPERTY(QVariantMap buttons READ buttons NOTIFY buttonsChanged)
 
     // --- 新增：键盘相关属性 ---
     // 0 = Gamepad, 1 = Keyboard
@@ -58,7 +60,8 @@ public:
     double rightStickY() const { return m_ry; }
     double leftTrigger() const { return m_lt; }
     double rightTrigger() const { return m_rt; }
-    int buttons() const { return m_buttons; }
+    // int buttons() const { return m_buttons; }
+    QVariantMap buttons() const { return m_buttons; }
 
     // 新增 Getter/Setter
     int inputMode() const { return m_inputMode; }
@@ -100,7 +103,8 @@ private:
 
     // 缓存数据
     double m_lx=0, m_ly=0, m_rx=0, m_ry=0, m_lt=0, m_rt=0;
-    int m_buttons = 0;
+    // int m_buttons = 0;
+    QVariantMap m_buttons;
 
     // --- 新增变量 ---
     int m_inputMode = 0; // 0: Gamepad, 1: Keyboard

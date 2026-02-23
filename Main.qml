@@ -20,6 +20,7 @@ ApplicationWindow {
                     client.addMapping("joy_ly", "move", "y", -1.0)   // 对应 ly -> y
                     client.addMapping("joy_rx", "move", "rot", 1.0) // 对应 rx -> rot
                     client.addMapping("joy_ry", "move", "z", -1.0)   // 对应 ry -> z
+                    client.addMapping("Btn_A", "set_depth_locked", "btn_status", 1.0)
         }
     }
 
@@ -31,6 +32,14 @@ ApplicationWindow {
             client.updateInputState("gamepad", "joy_ly", Backend.leftStickY)
             client.updateInputState("gamepad", "joy_rx", Backend.rightStickX)
             client.updateInputState("gamepad", "joy_ry", Backend.rightStickY)
+        }
+        function onButtonsChanged() {
+            // Backend.buttons 现在是一个对象，例如 { "a": true, "x": false ... }
+            // 我们可以直接通过键名访问
+            client.updateInputState("gamepad", "Btn_A", Backend.buttons["a"] ? 1.0 : 0.0)
+            client.updateInputState("gamepad", "Btn_B", Backend.buttons["b"] ? 1.0 : 0.0)
+            client.updateInputState("gamepad", "Btn_X", Backend.buttons["x"] ? 1.0 : 0.0)
+            client.updateInputState("gamepad", "Btn_Y", Backend.buttons["y"] ? 1.0 : 0.0)
         }
     }
 

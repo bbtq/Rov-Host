@@ -180,34 +180,67 @@ void RobotClient::onTimerTick()
 {
     if (m_socket->state() != QAbstractSocket::ConnectedState) return;
 
-    // 1. 遍历映射表，根据最新的输入值构建各方法的参数对象
-    QMap<QString, QJsonObject> methodsMap;
-    for (const auto &map : m_mappings) {
-        float val = 0.0f;
-        if (m_currentInputValues.contains(map.inputKey)) {
-            val = m_currentInputValues[map.inputKey] * map.scale;
-        }
+    // 1. 临时存储各方法的参数（因为 params 可能是 Object 也可能是 Value/Array）
+    // 我们用 QJsonValue 来兼容两种情况
+    QMap<QString, QJsonValue> methodsMap;
 
-        // 获取该方法对应的 Json 对象（如果不存在则新建）
-        QJsonObject params = methodsMap.value(map.method);
-        params.insert(map.paramKey, val); // 插入参数，如 "x": 0.5
-        methodsMap.insert(map.method, params);
+    // 记录哪些方法已经使用了“直接数据”模式，防止冲突
+    QSet<QString> directModeMethods;
+
+    for (const auto &map : m_mappings) {
+        float currentVal = m_currentInputValues.value(map.inputKey, 0.0f);
+        float lastVal = m_lastInputValues.value(map.inputKey, 0.0f);
+
+        // 判定：当前值 > 0.5 视为按下
+        bool isPressed = (currentVal > 0.5f);
+        bool wasPressed = (lastVal > 0.5f);
+
+        if (map.paramKey == "btn_status") {
+            // --- 情况 A: btn_status (按下瞬间翻转) ---
+            if (isPressed && !wasPressed) { // 检测到上升沿（刚刚按下）
+                m_toggleStates[map.inputKey] = !m_toggleStates.value(map.inputKey, false);
+            }
+            // 构造参数：直接传布尔值（封装进数组以符合一般 RPC 规范，或根据需求直接传值）
+            QJsonArray arr;
+            arr.append(m_toggleStates.value(map.inputKey, false));
+            methodsMap[map.method] = arr;
+            directModeMethods.insert(map.method);
+
+        } else if (map.paramKey == "btn_value") {
+            // --- 情况 B: btn_value (实时数值) ---
+            QJsonArray arr;
+            arr.append(currentVal * map.scale);
+            methodsMap[map.method] = arr;
+            directModeMethods.insert(map.method);
+
+        } else {
+            // --- 情况 C: 标准键值对 (如 x, y, rot) ---
+            // 如果该方法还没创建过，或者之前是直接数据模式，则初始化为 Object
+            if (!methodsMap.contains(map.method) || directModeMethods.contains(map.method)) {
+                methodsMap[map.method] = QJsonObject();
+                directModeMethods.remove(map.method); // 切换回对象模式
+            }
+
+            QJsonObject obj = methodsMap[map.method].toObject();
+            obj.insert(map.paramKey, currentVal * map.scale);
+            methodsMap[map.method] = obj;
+        }
     }
+
+    // 更新“上一时刻”的值，供下次 Tick 使用
+    m_lastInputValues = m_currentInputValues;
 
     // 2. 构建 JSON-RPC Batch 数组
     QJsonArray batchArray;
     int idCounter = 1;
 
-    // 遍历所有待发送的方法（包含 move, set_depth_locked 等）
-    auto it = methodsMap.constBegin();
-    while (it != methodsMap.constEnd()) {
+    for (auto it = methodsMap.constBegin(); it != methodsMap.constEnd(); ++it) {
         QJsonObject req;
         req["jsonrpc"] = "2.0";
         req["id"] = idCounter++;
-        req["method"] = it.key();   // 这里的 key 就是 "move"
-        req["params"] = it.value(); // 这里的 value 就是包含 x,y,rot,z 的对象
+        req["method"] = it.key();
+        req["params"] = it.value(); // 这里自动填入 QJsonObject 或 QJsonArray
         batchArray.append(req);
-        ++it;
     }
 
     // 3. 序列化并发送报文 (保持原有 HTTP 封装逻辑不变)

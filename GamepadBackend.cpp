@@ -204,15 +204,38 @@ void GamepadBackend::poll()
     }
 
     // 读取按键 (这里为了演示简单，合成一个 int，实际项目可以用 QMap 或多个 bool)
-    int currentButtons = 0;
+//     int currentButtons = 0;
+//     for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
+//         if (SDL_GameControllerGetButton(m_controller, (SDL_GameControllerButton)i)) {
+//             currentButtons |= (1 << i);
+//         }
+//     }
+
+//     if (currentButtons != m_buttons) {
+//         m_buttons = currentButtons;
+//         emit buttonsChanged();
+//     }
+    QVariantMap currentButtons;
     for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
-        if (SDL_GameControllerGetButton(m_controller, (SDL_GameControllerButton)i)) {
-            currentButtons |= (1 << i);
+        auto btn = static_cast<SDL_GameControllerButton>(i);
+
+        // 获取按键按下状态 (true/false)
+        bool isPressed = SDL_GameControllerGetButton(m_controller, btn);
+
+        // 获取 SDL 标准按键名称 (例如 "a", "b", "x", "y", "back", "start", "dpaddown" 等)
+        const char* btnName = SDL_GameControllerGetStringForButton(btn);
+
+        if (btnName) {
+            currentButtons.insert(QString::fromUtf8(btnName), isPressed);
         }
     }
 
+    // 只有当按键状态发生变化时才发出信号
     if (currentButtons != m_buttons) {
         m_buttons = currentButtons;
         emit buttonsChanged();
+
+        // 调试打印：查看当前按下的按键
+        qDebug() << "Buttons State Changed:" << m_buttons;
     }
 }
