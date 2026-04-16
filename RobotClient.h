@@ -10,6 +10,8 @@
 #include <QInputDevice> // Qt6 输入设备管理
 #include <QFile>
 #include <QStandardPaths>
+#include <QVariantMap>
+#include <QSettings> // 新增：用于保存上次路径
 
 // 定义映射规则结构体
 struct InputMapping {
@@ -26,6 +28,11 @@ class RobotClient : public QObject
     Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionChanged)
     Q_PROPERTY(int frequency READ frequency WRITE setFrequency NOTIFY frequencyChanged)
     Q_PROPERTY(QStringList inputDevices READ inputDevices NOTIFY inputDevicesChanged)
+    Q_PROPERTY(QVariantMap sensorData READ sensorData NOTIFY sensorDataChanged)
+    // 新增：是否显示按键监控
+    Q_PROPERTY(bool showInputMonitor READ showInputMonitor WRITE setShowInputMonitor NOTIFY showInputMonitorChanged)
+    // 新增：用于映射编辑器的模型属性
+    Q_PROPERTY(QVariantList qmlMappings READ qmlMappings WRITE setQmlMappings NOTIFY mappingsChanged)
 
 public:
     explicit RobotClient(QObject *parent = nullptr);
@@ -48,20 +55,43 @@ public:
     // 新增：获取默认配置文件路径（如程序目录下 config.json）
     Q_INVOKABLE QString getDefaultConfigPath();
 
+    QVariantMap sensorData() const { return m_sensorData; }
+
+    bool showInputMonitor() const { return m_showInputMonitor; }
+    void setShowInputMonitor(bool show) {
+        if (m_showInputMonitor != show) {
+            m_showInputMonitor = show;
+            emit showInputMonitorChanged();
+        }
+    }
+
     bool isConnected() const;
     int frequency() const;
     void setFrequency(int hz);
     QStringList inputDevices() const;
+
+    // 新增：属性访问器
+    QVariantList qmlMappings() const;
+    void setQmlMappings(const QVariantList &list);
+
+    // 修改/新增：配置持久化辅助函数
+    Q_INVOKABLE void saveLastConfigPath(const QString &path);
+    Q_INVOKABLE QString getLastConfigPath();
+    Q_INVOKABLE void saveCurrentConfig(); // 快捷保存到当前加载的路径
 
 signals:
     void connectionChanged();
     void frequencyChanged();
     void inputDevicesChanged();
     void logMessage(const QString &msg); // 用于UI显示日志
+    void sensorDataChanged();
+    void showInputMonitorChanged();
+    void mappingsChanged();
 
 private slots:
     void onTimerTick();
     void onSocketError(QAbstractSocket::SocketError socketError);
+    void onReadyRead(); // 新增：处理下位机回传
 
 private:
     QTcpSocket *m_socket;
@@ -79,6 +109,8 @@ private:
     // 新增：记录上一次发送给服务器的各个方法的参数快照
     QMap<QString, QJsonValue> m_lastMethodsMap;
     QMap<QString, bool> m_functionStates;
+    QVariantMap m_sensorData; //存储解析后的数据
+    bool m_showInputMonitor = true; // 默认开启
     
     // 存储映射规则
     QList<InputMapping> m_mappings;
@@ -87,6 +119,8 @@ private:
     QStringList m_deviceList;
 
     QByteArray buildPacket();
+
+    QString m_currentConfigPath; // 记录当前加载的文件路径
 };
 
 #endif // ROBOTCLIENT_H

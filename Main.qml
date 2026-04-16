@@ -17,12 +17,27 @@ ApplicationWindow {
 
     // --- 全局状态与配色 ---
     property bool showUI: true // 控制 UI 显示/隐藏的状态
+    property bool showInputMonitor: true // 控制按键显示开关
+
     readonly property color colorBg: "#121212"
     readonly property color colorSurface: "#AA1e1e1e"
     readonly property color colorPrimary: "#00e5ff"
     readonly property color colorText: "#e0e0e0"
 
+    // 预定义的键名列表用于下拉筛选
+    readonly property var gamepadKeyList: [
+        "joy_lx", "joy_ly", "joy_rx", "joy_ry", "joy_lt", "joy_rt",
+        "btn_a", "btn_b", "btn_x", "btn_y", "btn_back", "btn_start",
+        "btn_leftshoulder", "btn_rightshoulder", "btn_dpup", "btn_dpdown", "btn_dpleft", "btn_dpright"
+    ]
+    readonly property var keyboardKeyList: [
+        "key_W", "key_A", "key_S", "key_D", "key_Up", "key_Down", "key_Left", "key_Right",
+        "key_Space", "key_Shift", "key_Control", "key_Escape", "key_Enter", "key_Tab", "key_Q", "key_E"
+    ]
+
     background: Rectangle { color: "black" }
+
+
 
     // --- 后端逻辑组件 ---
     VideoBackend {
@@ -36,8 +51,21 @@ ApplicationWindow {
             logArea.append("[%1] %2".arg(Qt.formatTime(new Date(), "hh:mm:ss")).arg(msg))
         }
         Component.onCompleted: {
-            let defaultPath = robotClient.getDefaultConfigPath()
-            if (!robotClient.importConfig(defaultPath)) applyHardcodedDefaults()
+            let lastPath = robotClient.getLastConfigPath();
+            let defaultPath = robotClient.getDefaultConfigPath();
+
+            // 策略：优先加载上次，其次加载同级目录默认，最后硬编码生成
+            if (lastPath !== "" && robotClient.importConfig(lastPath)) {
+                logArea.append("<b>系统:</b> 加载上次配置: " + lastPath);
+            } else if (robotClient.importConfig(defaultPath)) {
+                logArea.append("<b>系统:</b> 加载默认配置文件");
+            } else {
+                logArea.append("<i>提示: 配置文件不存在，正在生成默认配置...</i>");
+                applyHardcodedDefaults();
+                robotClient.exportConfig(defaultPath); // 自动生成并保存
+                robotClient.saveLastConfigPath(defaultPath);
+            }
+            // if (!robotClient.importConfig(defaultPath)) applyHardcodedDefaults()
         }
 
         function applyHardcodedDefaults() {
@@ -482,14 +510,20 @@ ApplicationWindow {
                         }
                     }
                     GroupBox {
-                        title: "映射配置"; Layout.fillWidth: true
-                        background: Rectangle { color: "transparent"; border.color: "#333"; radius: 8 }
+                        title: "配置管理"; Layout.fillWidth: true
+                        background: Rectangle { border.color: "#333"; radius: 8; color: "transparent" }
                         label: Text { text: parent.title; color: "#888" }
-                        RowLayout {
-                            spacing: 10
-                            Button { text: "导入 JSON"; onClicked: importDialog.open() }
-                            Button { text: "导出当前"; onClicked: exportDialog.open() }
-                            Button { text: "恢复默认"; onClicked: robotClient.applyHardcodedDefaults() }
+                        GridLayout {
+                            columns: 2; anchors.fill: parent; rowSpacing: 10; columnSpacing: 10
+                            Button { text: "导入 JSON"; Layout.fillWidth: true; onClicked: importDialog.open() }
+                            Button { text: "导出配置"; Layout.fillWidth: true; onClicked: exportDialog.open() }
+                            Button { text: "恢复出厂"; Layout.fillWidth: true; onClicked: robotClient.applyHardcodedDefaults() }
+                            Button {
+                                text: "编辑映射";
+                                Layout.fillWidth: true;
+                                highlighted: true
+                                onClicked: mappingEditorPopup.open() // 打开分页编辑器
+                            }
                         }
                     }
                     Item { Layout.fillHeight: true }
@@ -506,10 +540,245 @@ ApplicationWindow {
         }
     }
 
+    Component.onCompleted: {
+            let lastPath = robotClient.getLastConfigPath();
+            let defaultPath = robotClient.getDefaultConfigPath();
+
+            if (lastPath !== "" && robotClient.importConfig(lastPath)) {
+                logArea.append("<b>系统:</b> 已加载上次使用的配置: " + lastPath);
+            } else {
+                // 如果上次路径不可用
+                if (lastPath !== "") {
+                    errorDialog.text = "找不到上次的配置文件，已恢复默认配置。";
+                    errorDialog.open();
+                    logArea.append("<font color='orange'>警告: 上次配置丢失: </font>" + lastPath);
+                }
+
+                // 尝试加载默认文件，若无则生成
+                if (!robotClient.importConfig(defaultPath)) {
+                    logArea.append("<i>提示: 自动生成初始配置文件...</i>");
+                    applyHardcodedDefaults();
+                    robotClient.saveLastConfigPath(defaultPath);
+                    robotClient.exportConfig(defaultPath); // 立即保存一份
+                }
+            }
+        }
+
+        // --- 映射编辑器弹窗 ---
+        Popup {
+            id: mappingEditorPopup
+            width: 800; height: 600; x: (parent.width-width)/2; y: (parent.height-height)/2
+            modal: true; focus: true
+            background: Rectangle { color: "#1a1a1a"; radius: 12; border.color: colorPrimary }
+
+            property var tempMappings: []
+            onAboutToShow: tempMappings = robotClient.qmlMappings
+
+            ColumnLayout {
+                anchors.fill: parent; anchors.margins: 20; spacing: 15
+
+                TabBar {
+                    id: editorTabBar; Layout.fillWidth: true
+                    TabButton { text: "🎮 手柄映射 (Gamepad)" }
+                    TabButton { text: "⌨️ 键盘映射 (Keyboard)" }
+                }
+
+                // 表头
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 10
+                    Text { text: "输入键名"; color: "#888"; Layout.preferredWidth: 200 }
+                    Text { text: "方法 (Method)"; color: "#888"; Layout.preferredWidth: 150 }
+                    Text { text: "参数/类型"; color: "#888"; Layout.preferredWidth: 120 }
+                    Text { text: "比例因子"; color: "#888"; Layout.fillWidth: true }
+                    Item { Layout.preferredWidth: 40 }
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                    ListView {
+                        id: mappingListView; spacing: 8
+                        model: mappingEditorPopup.tempMappings
+                        delegate: RowLayout {
+                            id: delegateRow
+                            width: mappingListView.width; spacing: 10
+                            // 根据当前 Tab 过滤显示
+                            visible: (editorTabBar.currentIndex === 0 && (modelData.inputKey.startsWith("joy_") || modelData.inputKey.startsWith("btn_"))) ||
+                                     (editorTabBar.currentIndex === 1 && modelData.inputKey.startsWith("key_"))
+                            height: visible ? 40 : 0
+
+                            // 优化点 4: 搜索式下拉框
+                            ComboBox {
+                                Layout.preferredWidth: 200
+                                editable: true
+                                model: editorTabBar.currentIndex === 0 ? gamepadKeyList : keyboardKeyList
+                                currentIndex: model.indexOf(modelData.inputKey)
+
+                                // 设置文字颜色为白色
+                                contentItem: TextInput {
+                                    text: parent.editText
+                                    color: "white"
+                                    selectionColor: "gray"
+                                    cursorVisible: parent.activeFocus
+                                    font: parent.font
+                                    verticalAlignment: TextInput.AlignVCenter
+                                }
+
+
+                                onEditTextChanged: {
+                                    mappingEditorPopup.tempMappings[index].inputKey = editText
+                                }
+                                // 简单的包含过滤逻辑
+                                onPressedChanged: { if(pressed) model = (editorTabBar.currentIndex === 0 ? gamepadKeyList : keyboardKeyList).filter(s => s.includes(editText)) }
+
+                            }
+
+                            TextField {
+                                text: modelData.method; Layout.preferredWidth: 150
+                                color: "white"
+                                background: Rectangle {
+                                    color: "transparent"
+                                    border.color: "white"
+                                    border.width: 1
+                                    radius: 4
+                                }
+
+                                onTextChanged: mappingEditorPopup.tempMappings[index].method = text
+                            }
+
+                            TextField {
+                                text: modelData.paramKey; Layout.preferredWidth: 120
+                                color: "white"                    // 输入文字白色
+                                placeholderTextColor: "#aaaaaa"   // 占位符灰色（如果有）
+
+                                background: Rectangle {
+                                    color: "transparent"          // 或 "#333333"
+                                    border.color: "white"
+                                    border.width: 1
+                                    radius: 4
+                                }
+
+                                onTextChanged: mappingEditorPopup.tempMappings[index].paramKey = text
+                            }
+
+                            // 优化点 2: 带有边界限制的输入栏 (-10.0 ~ 10.0)
+                            TextField {
+                                Layout.fillWidth: true
+                                text: modelData.scale.toFixed(2)
+                                validator: DoubleValidator { bottom: -10.0; top: 10.0; decimals: 2 }
+
+                                color: "white"
+                                background: Rectangle {
+                                    color: "transparent"
+                                    border.color: "white"
+                                    border.width: 1
+                                    radius: 4
+                                }
+
+                                onTextChanged: mappingEditorPopup.tempMappings[index].scale = parseFloat(text)
+                            }
+
+                            Button {
+                                text: "删除";
+
+                                onClicked: { let a = mappingEditorPopup.tempMappings; a.splice(index, 1); mappingEditorPopup.tempMappings = a }
+                            }
+                        }
+
+                        footer: Button {
+                            text: "＋ 添加映射项"; Layout.fillWidth: true;
+
+                            onClicked: {
+                                let a = mappingEditorPopup.tempMappings;
+                                let prefix = editorTabBar.currentIndex === 0 ? "joy_new" : "key_new";
+                                a.push({"inputKey": prefix, "method": "move", "paramKey": "x", "scale": 1.0});
+                                mappingEditorPopup.tempMappings = a;
+                            }
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignRight; spacing: 15
+                    Button { text: "保存并应用"; highlighted: true; onClicked: { robotClient.qmlMappings = mappingEditorPopup.tempMappings; robotClient.saveCurrentConfig(); mappingEditorPopup.close() } }
+                    Button { text: "恢复"; onClicked: mappingEditorPopup.tempMappings = robotClient.qmlMappings }
+                    Button { text: "退出"; onClicked: mappingEditorPopup.close() }
+                }
+            }
+        }
+
     MediaDevices { id: mediaDevices }
 
     Connections {
         target: videoBackend
         function onErrorMessage(msg) { logArea.append("<font color='red'>错误: " + msg + "</font>") }
     }
+
+    // --- 1. 左侧动态传感器看板 ---
+        Column {
+            id: sensorOverlay
+            anchors.left: parent.left
+            anchors.leftMargin: 20
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 12
+            z: 150
+            visible: showUI // 随工具栏一起隐藏
+
+            Repeater {
+                // 动态绑定 sensorData 的所有键值对
+                model: Object.keys(robotClient.sensorData)
+                delegate: Rectangle {
+                    width: 150; height: 50
+                    color: "#CC1e1e1e"
+                    radius: 8
+                    border.color: colorPrimary
+                    border.width: 1
+
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 2
+                        Text {
+                            text: modelData // 键名，如“温度”
+                            color: "#888"; font.pixelSize: 11; anchors.horizontalCenter: parent.horizontalCenter
+                        }
+                        Text {
+                            text: robotClient.sensorData[modelData] // 值，如“30.89 ℃”
+                            color: "white"; font.bold: true; font.pixelSize: 15; anchors.horizontalCenter: parent.horizontalCenter
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 2. 底部实时按键监控条 ---
+        Rectangle {
+            id: inputMonitor
+            anchors.bottom: videoControlPanel.top
+            anchors.bottomMargin: 10
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 450; height: 36
+            color: "#AA000000"
+            radius: 18
+            border.color: "#33ffffff"
+            visible: showUI && robotClient.showInputMonitor // 支持开关
+            z: 150
+
+            RowLayout {
+                anchors.fill: parent; anchors.margins: 10
+                Text { text: "🎮 实时输入:"; color: colorPrimary; font.bold: true; font.pixelSize: 12 }
+                Text {
+                    color: "white"; font.family: "Monospace"; font.pixelSize: 12
+                    Layout.fillWidth: true; elide: Text.ElideRight
+                    // 实时计算当前活动输入
+                    text: {
+                        let active = [];
+                        // 检查主要轴
+                        if (Math.abs(Backend.leftStickX) > 0.1) active.push("LX:" + Backend.leftStickX.toFixed(2));
+                        if (Math.abs(Backend.leftStickY) > 0.1) active.push("LY:" + Backend.leftStickY.toFixed(2));
+                        // 获取键盘/手柄按键字符串
+                        let keys = Backend.pressedKeysString || "";
+                        return (active.join(" ") + " " + keys).trim() || "IDLE";
+                    }
+                }
+            }
+        }
 }

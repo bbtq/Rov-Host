@@ -25,6 +25,52 @@ RobotClient::RobotClient(QObject *parent) : QObject(parent)
         emit logMessage("Disconnected");
     });
     connect(m_socket, &QTcpSocket::errorOccurred, this, &RobotClient::onSocketError);
+    connect(m_socket, &QTcpSocket::readyRead, this, &RobotClient::onReadyRead);
+
+    m_currentConfigPath = getDefaultConfigPath();
+}
+
+void RobotClient::onReadyRead()
+{
+    QByteArray data = m_socket->readAll();
+
+    // 1. 查找 HTTP Body 的起始位置 (\r\n\r\n 之后)
+    int bodyIndex = data.indexOf("\r\n\r\n");
+    if (bodyIndex == -1) return;
+
+    QByteArray jsonBody = data.mid(bodyIndex + 4).trimmed();
+    if (jsonBody.isEmpty()) return;
+
+    // 2. 解析 JSON
+    QJsonParseError error;
+    QJsonDocument doc = QJsonDocument::fromJson(jsonBody, &error);
+    if (error.error != QJsonParseError::NoError) {
+        // 如果解析失败，可能是数据不完整（粘包/半包），实际开发需缓存 buffer，这里做简单处理
+        return;
+    }
+
+    QJsonArray responses;
+    if (doc.isArray()) {
+        responses = doc.array();
+    } else if (doc.isObject()) {
+        responses.append(doc.object());
+    }
+
+    bool updated = false;
+    for (int i = 0; i < responses.size(); ++i) {
+        QJsonObject resObj = responses[i].toObject();
+
+        // 3. 匹配 get_info 的响应 (通常包含 result 且 result 是对象)
+        if (resObj.contains("result") && resObj["result"].isObject()) {
+            // 将 JSON 对象转换为 QVariantMap 供 QML 使用
+            m_sensorData = resObj["result"].toObject().toVariantMap();
+            updated = true;
+        }
+    }
+
+    if (updated) {
+        emit sensorDataChanged();
+    }
 }
 
 void RobotClient::connectToServer(const QString &ip, int port)
@@ -91,6 +137,48 @@ void RobotClient::clearMappings()
     m_lastMethodsMap.clear(); // 新增
 }
 
+
+/// 将内部映射列表转为 QML 可用的 QVariantList
+QVariantList RobotClient::qmlMappings() const {
+    QVariantList list;
+    for (const auto &map : m_mappings) {
+        QVariantMap vm;
+        vm["inputKey"] = map.inputKey;
+        vm["method"] = map.method;
+        vm["paramKey"] = map.paramKey;
+        vm["scale"] = map.scale;
+        list.append(vm);
+    }
+    return list;
+}
+
+// 从 QML 的修改更新内部列表
+void RobotClient::setQmlMappings(const QVariantList &list) {
+    clearMappings();
+    for (const auto &v : list) {
+        QVariantMap vm = v.toMap();
+        addMapping(vm["inputKey"].toString(), vm["method"].toString(),
+                   vm["paramKey"].toString(), vm["scale"].toFloat());
+    }
+    emit mappingsChanged();
+}
+
+// 记录最后一次使用的配置文件地址
+void RobotClient::saveLastConfigPath(const QString &path) {
+    QSettings settings("MyRobot", "ROVHost");
+    settings.setValue("lastConfigPath", path);
+}
+
+QString RobotClient::getLastConfigPath() {
+    QSettings settings("MyRobot", "ROVHost");
+    return settings.value("lastConfigPath", "").toString();
+}
+
+// 保存当前配置到当前路径
+void RobotClient::saveCurrentConfig() {
+    exportConfig(m_currentConfigPath);
+}
+
 // 获取默认路径：建议放在可执行文件同级目录
 QString RobotClient::getDefaultConfigPath() {
     return QCoreApplication::applicationDirPath() + "/robot_config.json";
@@ -142,6 +230,9 @@ bool RobotClient::importConfig(const QString &filePath) {
             );
     }
     emit logMessage("成功导入配置: " + path);
+    m_currentConfigPath = path;
+    saveLastConfigPath(path);
+    emit mappingsChanged(); // 通知 UI 更新编辑器
     return true;
 }
 
