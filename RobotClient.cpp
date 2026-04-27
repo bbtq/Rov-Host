@@ -8,7 +8,7 @@ RobotClient::RobotClient(QObject *parent) : QObject(parent)
     m_timer = new QTimer(this);
 
     m_getInfoTimer.start(); // 初始化时启动心跳计时器
-    
+
     // 禁用Nagle算法，降低延迟
     m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
 

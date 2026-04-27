@@ -749,36 +749,174 @@ ApplicationWindow {
             }
         }
 
-        // --- 2. 底部实时按键监控条 ---
-        Rectangle {
-            id: inputMonitor
-            anchors.bottom: videoControlPanel.top
-            anchors.bottomMargin: 10
-            anchors.horizontalCenter: parent.horizontalCenter
-            width: 450; height: 36
-            color: "#AA000000"
-            radius: 18
-            border.color: "#33ffffff"
-            visible: showUI && robotClient.showInputMonitor // 支持开关
-            z: 150
+        // // --- 2. 底部实时按键监控条 ---
+        // Rectangle {
+        //     id: inputMonitor
+        //     anchors.bottom: videoControlPanel.top
+        //     anchors.bottomMargin: 10
+        //     anchors.horizontalCenter: parent.horizontalCenter
+        //     width: 450; height: 36
+        //     color: "#AA000000"
+        //     radius: 18
+        //     border.color: "#33ffffff"
+        //     visible: showUI && robotClient.showInputMonitor // 支持开关
+        //     z: 150
 
-            RowLayout {
-                anchors.fill: parent; anchors.margins: 10
-                Text { text: "🎮 实时输入:"; color: colorPrimary; font.bold: true; font.pixelSize: 12 }
-                Text {
-                    color: "white"; font.family: "Monospace"; font.pixelSize: 12
-                    Layout.fillWidth: true; elide: Text.ElideRight
-                    // 实时计算当前活动输入
-                    text: {
-                        let active = [];
-                        // 检查主要轴
-                        if (Math.abs(Backend.leftStickX) > 0.1) active.push("LX:" + Backend.leftStickX.toFixed(2));
-                        if (Math.abs(Backend.leftStickY) > 0.1) active.push("LY:" + Backend.leftStickY.toFixed(2));
-                        // 获取键盘/手柄按键字符串
-                        let keys = Backend.pressedKeysString || "";
-                        return (active.join(" ") + " " + keys).trim() || "IDLE";
+        //     RowLayout {
+        //         anchors.fill: parent; anchors.margins: 10
+        //         Text { text: "🎮 实时输入:"; color: colorPrimary; font.bold: true; font.pixelSize: 12 }
+        //         Text {
+        //             color: "white"; font.family: "Monospace"; font.pixelSize: 12
+        //             Layout.fillWidth: true; elide: Text.ElideRight
+        //             // 实时计算当前活动输入
+        //             text: {
+        //                 let active = [];
+        //                 // 检查主要轴
+        //                 if (Math.abs(Backend.leftStickX) > 0.1) active.push("LX:" + Backend.leftStickX.toFixed(2));
+        //                 if (Math.abs(Backend.leftStickY) > 0.1) active.push("LY:" + Backend.leftStickY.toFixed(2));
+        //                 // 获取键盘/手柄按键字符串
+        //                 let keys = Backend.pressedKeysString || "";
+        //                 return (active.join(" ") + " " + keys).trim() || "IDLE";
+        //             }
+        //         }
+        //     }
+        // }
+        RowLayout {
+                id: inputMonitorArea
+                anchors.bottom: videoControlPanel.top
+                anchors.bottomMargin: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+                height: 85 // 稍微增加高度以容纳肩键
+                spacing: 15
+                z: 150
+                visible: showUI && robotClient.showInputMonitor
+
+                // --- 1. 手柄正面可视化展示图 ---
+                Rectangle {
+                    id: gamepadVisualizer
+                    width: 220; height: 85
+                    color: "#CC000000" // 黑色半透明背景
+                    radius: 12
+                    border.color: "#33ffffff"
+                    border.width: 1
+
+                    Item {
+                        anchors.fill: parent
+                        anchors.margins: 5
+
+                        // --- [顶部] 肩键区域 (LB, LT, RB, RT) ---
+                        // 左侧肩键
+                        Row {
+                            x: 10; y: 2; spacing: 5
+                            // LT
+                            Rectangle {
+                                width: 30; height: 8; radius: 2;
+                                color: Backend.leftTrigger > 0.1 ? colorPrimary : "#33ffffff"
+                                border.color: Backend.leftTrigger > 0.1 ? "white" : "transparent"
+                            }
+                            // LB
+                            Rectangle {
+                                width: 25; height: 6; radius: 2;
+                                color: Backend.buttons["btn_leftshoulder"] ? colorPrimary : "#33ffffff"
+                            }
+                        }
+
+                        // 右侧肩键
+                        Row {
+                            anchors.right: parent.right; anchors.rightMargin: 10; y: 2; spacing: 5
+                            // RB
+                            Rectangle {
+                                width: 25; height: 6; radius: 2;
+                                color: Backend.buttons["btn_rightshoulder"] ? colorPrimary : "#33ffffff"
+                            }
+                            // RT
+                            Rectangle {
+                                width: 30; height: 8; radius: 2;
+                                color: Backend.rightTrigger > 0.1 ? colorPrimary : "#33ffffff"
+                                border.color: Backend.rightTrigger > 0.1 ? "white" : "transparent"
+                            }
+                        }
+
+                        // --- [左侧] 方向键区域 - 正菱形布局 ---
+                        Item {
+                            id: dpadGroup
+                            x: 15; y: 40; width: 40; height: 40
+                            // 上
+                            Rectangle { anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; width: 10; height: 10; radius: 2; color: Backend.buttons["btn_dpup"] ? colorPrimary : "#33ffffff" }
+                            // 下
+                            Rectangle { anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; width: 10; height: 10; radius: 2; color: Backend.buttons["btn_dpdown"] ? colorPrimary : "#33ffffff" }
+                            // 左
+                            Rectangle { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; width: 10; height: 10; radius: 2; color: Backend.buttons["btn_dpleft"] ? colorPrimary : "#33ffffff" }
+                            // 右
+                            Rectangle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; width: 10; height: 10; radius: 2; color: Backend.buttons["btn_dpright"] ? colorPrimary : "#33ffffff" }
+                        }
+
+                        // --- [中间] 左右摇杆状态 ---
+                        // 左摇杆 (L-Stick)
+                        Rectangle {
+                            x: 65; y: 15; width: 30; height: 30; radius: 15; color: "#11ffffff"; border.color: "#44ffffff"
+                            Rectangle {
+                                width: 10; height: 10; radius: 5; color: "white"
+                                x: 10 + Backend.leftStickX * 10
+                                y: 10 + Backend.leftStickY * 10
+                            }
+                        }
+                        // 右摇杆 (R-Stick)
+                        Rectangle {
+                            x: 115; y: 45; width: 30; height: 30; radius: 15; color: "#11ffffff"; border.color: "#44ffffff"
+                            Rectangle {
+                                width: 10; height: 10; radius: 5; color: "white"
+                                x: 10 + Backend.rightStickX * 10
+                                y: 10 + Backend.rightStickY * 10
+                            }
+                        }
+
+                        // --- [右侧] ABXY 区域 - 正菱形布局 (X左, Y上, A下, B右) ---
+                        Item {
+                            id: abxyGroup
+                            anchors.right: parent.right; anchors.rightMargin: 15; y: 15; width: 45; height: 45
+                            // Y 上 (黄色)
+                            Rectangle { anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; width: 14; height: 14; radius: 7;
+                                        color: Backend.buttons["btn_y"] ? "#FFD700" : "#33ffffff" }
+                            // A 下 (绿色)
+                            Rectangle { anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; width: 14; height: 14; radius: 7;
+                                        color: Backend.buttons["btn_a"] ? "#32CD32" : "#33ffffff" }
+                            // X 左 (蓝色)
+                            Rectangle { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; width: 14; height: 14; radius: 7;
+                                        color: Backend.buttons["btn_x"] ? "#1E90FF" : "#33ffffff" }
+                            // B 右 (红色)
+                            Rectangle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; width: 14; height: 14; radius: 7;
+                                        color: Backend.buttons["btn_b"] ? "#FF4500" : "#33ffffff" }
+                        }
+                    }
+                }
+
+                // --- 2. 实时文字输入监控条 ---
+                Rectangle {
+                    id: inputMonitorTextBar
+                    width: 400; height: 40
+                    color: "#AA000000"
+                    radius: 20
+                    border.color: "#33ffffff"
+                    Layout.alignment: Qt.AlignVCenter
+
+                    RowLayout {
+                        anchors.fill: parent; anchors.margins: 12
+                        Text { text: "⌨️ 输入监控:"; color: colorPrimary; font.bold: true; font.pixelSize: 12 }
+                        Text {
+                            color: "white"; font.family: "Monospace"; font.pixelSize: 12
+                            Layout.fillWidth: true; elide: Text.ElideRight
+                            text: {
+                                let active = []
+                                if (Math.abs(Backend.leftStickX) > 0.1) active.push("LX:" + Backend.leftStickX.toFixed(2))
+                                if (Math.abs(Backend.leftStickY) > 0.1) active.push("LY:" + Backend.leftStickY.toFixed(2))
+                                if (Backend.leftTrigger > 0.1) active.push("LT:" + Backend.leftTrigger.toFixed(2))
+                                if (Backend.rightTrigger > 0.1) active.push("RT:" + Backend.rightTrigger.toFixed(2))
+                                let keys = Backend.pressedKeysString || ""
+                                return (active.join(" ") + " " + keys).trim() || "IDLE"
+                            }
+                        }
                     }
                 }
             }
-        }
 }

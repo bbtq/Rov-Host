@@ -188,6 +188,7 @@ void GamepadBackend::poll()
         return;
     }
 
+
     // 读取轴
     double lx = normalizeAxis(SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_LEFTX));
     double ly = normalizeAxis(SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_LEFTY));
@@ -197,13 +198,18 @@ void GamepadBackend::poll()
     double lt = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) / 32767.0;
     double rt = SDL_GameControllerGetAxis(m_controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) / 32767.0;
 
-    if (lx != m_lx) { m_lx = lx; emit inputTriggered("gamepad", "joy_lx", lx); }
-    if (ly != m_ly) { m_ly = ly; emit inputTriggered("gamepad", "joy_ly", ly); }
-    if (rx != m_rx) { m_rx = rx; emit inputTriggered("gamepad", "joy_rx", rx); }
-    if (ry != m_ry) { m_ry = ry; emit inputTriggered("gamepad", "joy_ry", ry); }
-    if (lt != m_lt) { m_lt = lt; emit inputTriggered("gamepad", "joy_lt", lt); }
-    if (rt != m_rt) { m_rt = rt; emit inputTriggered("gamepad", "joy_rt", rt); }
+    bool anyAxisChanged = false;
 
+    if (lx != m_lx) { m_lx = lx; anyAxisChanged = true; emit inputTriggered("gamepad", "joy_lx", lx); }
+    if (ly != m_ly) { m_ly = ly; anyAxisChanged = true; emit inputTriggered("gamepad", "joy_ly", ly); }
+    if (rx != m_rx) { m_rx = rx; anyAxisChanged = true; emit inputTriggered("gamepad", "joy_rx", rx); }
+    if (ry != m_ry) { m_ry = ry; anyAxisChanged = true; emit inputTriggered("gamepad", "joy_ry", ry); }
+    if (lt != m_lt) { m_lt = lt; anyAxisChanged = true; emit inputTriggered("gamepad", "joy_lt", lt); }
+    if (rt != m_rt) { m_rt = rt; anyAxisChanged = true; emit inputTriggered("gamepad", "joy_rt", rt); }
+
+    if (anyAxisChanged) {
+        emit axisChanged();
+    }
 
 
     // 读取按键 (这里为了演示简单，合成一个 int，实际项目可以用 QMap 或多个 bool)
